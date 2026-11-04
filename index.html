@@ -585,7 +585,7 @@
       return { kind: 'none', label: 'Hands full' };
     }
 
-    if (board[target.y][target.x] === T_RAMP) {
+    if (board[target.y][target.x] === T_RAMP || board[target.y][target.x] === T_DOOR) {
       if (gameState === STATE_UNLOAD && hand.type === 'crate') return { kind: 'deliver-crate', label: 'E: deliver crate' };
       if (hand.type === 'crate') return { kind: 'return-crate', label: 'E: return crate to pile' };
       if (hand.type === null && dockPile > 0) {
@@ -1007,7 +1007,7 @@
       if (gameState === STATE_FLIGHT) {
         const engine = getEngineObject();
         if (engine) {
-          const flightSpeed = 0.30 + 0.70 * (engine.health / 100);
+          const flightSpeed = 1.0 + 2.0 * (engine.health / 100);
           flightProgress += flightSpeed * dt;
           if (flightProgress > 100) flightProgress = 100;
           if (flightProgress >= 100) {
