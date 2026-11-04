@@ -111,12 +111,13 @@
 <body>
 <div id="app">
   <header>
-    <div class="brand">FREIGHT <span>Step 1 · Spatial foundation</span></div>
+    <div class="brand">FREIGHT <span>Step 2 · Hands & interaction</span></div>
     <div class="stats">
       <div>Facing <b id="hud-facing">down</b></div>
       <div>Target <b id="hud-target">—</b></div>
+      <div>Hands <b id="hud-hands">Empty</b></div>
     </div>
-    <div class="hint">Move with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> or the arrow keys. The four amber corners mark the tile you face.</div>
+    <div class="hint">Move with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> or the arrow keys. Face the wrench bench and press <kbd>E</kbd> to take or return the wrench.</div>
   </header>
   <canvas id="game" width="952" height="448" aria-label="Freight starter ship board"></canvas>
   <p class="note">Starter ship · <b>17 × 8</b> grid · <b>56 px</b> tiles · <b>28</b> floor cells · <b>19</b> usable</p>
@@ -329,6 +330,53 @@
     return PALETTE.red;
   }
 
+  const WRENCH = 'wrench';
+
+  function createHand() {
+    return { type: null, id: null };
+  }
+
+  function takeTool(hand, toolId) {
+    if (hand.type !== null) return { ok: false, reason: 'Hands full' };
+    hand.type = 'tool';
+    hand.id = toolId;
+    return { ok: true, reason: '' };
+  }
+
+  function returnTool(hand, toolId) {
+    if (hand.type !== 'tool' || hand.id !== toolId) {
+      return { ok: false, reason: 'Not holding that tool' };
+    }
+    hand.type = null;
+    hand.id = null;
+    return { ok: true, reason: '' };
+  }
+
+  function toolIsTaken(hand, toolId) {
+    return hand.type === 'tool' && hand.id === toolId;
+  }
+
+  function handLabel(hand) {
+    if (hand.type === 'tool') return hand.id === WRENCH ? 'Wrench' : String(hand.id);
+    if (hand.type === 'crate') return 'Crate';
+    return 'Empty';
+  }
+
+  function actionLabel(hand, object) {
+    if (!object) return '';
+    if (object.kind === 'bench') {
+      if (toolIsTaken(hand, WRENCH)) return 'E: return wrench';
+      if (hand.type === null) return 'E: take wrench';
+      return 'Hands full';
+    }
+    if (object.id === 'engine') {
+      if (toolIsTaken(hand, WRENCH)) return 'Hold E: repair';
+      return 'Needs wrench';
+    }
+    if (object.kind === 'console') return 'E: launch (step 4)';
+    return '';
+  }
+
   const Logic = {
     TILE: TILE,
     COLS: COLS,
@@ -359,7 +407,14 @@
     moveWithCollision: moveWithCollision,
     targetCell: targetCell,
     tileName: tileName,
-    healthColor: healthColor
+    healthColor: healthColor,
+    WRENCH: WRENCH,
+    createHand: createHand,
+    takeTool: takeTool,
+    returnTool: returnTool,
+    toolIsTaken: toolIsTaken,
+    handLabel: handLabel,
+    actionLabel: actionLabel
   };
 
   global.FreightLogic = Logic;
@@ -371,6 +426,7 @@
     const ctx = canvas.getContext('2d');
     const facingEl = document.getElementById('hud-facing');
     const targetEl = document.getElementById('hud-target');
+    const handsEl = document.getElementById('hud-hands');
 
     const board = buildStarterBoard();
     const objects = starterObjects();
@@ -392,8 +448,13 @@
     };
 
     const heldCodes = [];
+    let eHeld = false;
     let hudFacing = '';
     let hudTarget = '';
+    let hudHands = '';
+
+    // Task 2.1 — Hand state & key handlers
+    const hand = createHand(); // 'crate' | 'tool' | null
 
     function activeDirection() {
       for (let i = heldCodes.length - 1; i >= 0; i--) {
@@ -404,6 +465,13 @@
     }
 
     function onKeyDown(event) {
+      if (event.code === 'KeyE') {
+        event.preventDefault();
+        if (event.repeat) return;
+        eHeld = true;
+        handlePressE();
+        return;
+      }
       if (event.repeat) return;
       if (KEY_DIR[event.code] === undefined) return;
       event.preventDefault();
@@ -411,9 +479,53 @@
     }
 
     function onKeyUp(event) {
+      if (event.code === 'KeyE') {
+        eHeld = false;
+        return;
+      }
       if (KEY_DIR[event.code] === undefined) return;
       const index = heldCodes.indexOf(event.code);
       if (index !== -1) heldCodes.splice(index, 1);
+    }
+
+    function handLabel() {
+      if (hand.type === 'tool' && hand.id === 'wrench') return 'Wrench';
+      if (hand.type === 'crate') return 'Crate';
+      return 'Empty';
+    }
+
+    function actionLabel(object) {
+      if (!object) return '';
+      if (object.kind === 'bench') {
+        if (hand.type === null) return 'E: take wrench';
+        if (hand.type === 'tool' && hand.id === 'wrench') return 'E: return wrench';
+        return 'Hands full';
+      }
+      if (object.id === 'engine') {
+        if (hand.type === 'tool' && hand.id === 'wrench') return 'Hold E: repair';
+        return 'Needs wrench';
+      }
+      if (object.kind === 'console') return 'E: launch (step 4)';
+      return '';
+    }
+
+    function handlePressE() {
+      const target = targetCell(player);
+      if (!insideBoard(target.x, target.y)) return;
+
+      const object = objectAt(objects, target.x, target.y);
+      if (!object) return;
+
+      if (object.kind === 'bench') {
+        if (hand.type === null) {
+          hand.type = 'tool';
+          hand.id = 'wrench';
+        } else if (hand.type === 'tool' && hand.id === 'wrench') {
+          hand.type = null;
+          hand.id = null;
+        }
+        updateHud();
+      }
     }
 
     function updateHud() {
@@ -425,11 +537,19 @@
       const target = targetCell(player);
       let label = '—';
       if (insideBoard(target.x, target.y)) {
+        const object = objectAt(objects, target.x, target.y);
         label = tileName(board, objects, target.x, target.y) + ' · x' + target.x + ' y' + (target.y + 1);
+        const action = actionLabel(object);
+        if (action) label += ' · ' + action;
       }
       if (label !== hudTarget) {
         targetEl.textContent = label;
         hudTarget = label;
+      }
+      const hands = handLabel();
+      if (hands !== hudHands) {
+        handsEl.textContent = hands;
+        hudHands = hands;
       }
     }
 
@@ -639,21 +759,14 @@
       ctx.fillText('PILOT', px + TILE / 2, py + TILE - 12);
     }
 
-    function drawBench(o) {
-      const px = o.x * TILE;
-      const py = o.y * TILE;
-      ctx.fillStyle = PALETTE.bench;
-      roundRect(px + 5, py + 12, TILE - 10, TILE - 22, 4);
-      ctx.fill();
-      ctx.fillStyle = PALETTE.benchTop;
-      roundRect(px + 8, py + 15, TILE - 16, 12, 3);
-      ctx.fill();
+    function drawWrenchIcon(cx, cy, scale) {
       ctx.strokeStyle = PALETTE.amber;
       ctx.lineWidth = 3;
       ctx.lineCap = 'round';
       ctx.save();
-      ctx.translate(px + TILE / 2, py + 38);
+      ctx.translate(cx, cy);
       ctx.rotate(-Math.PI / 4);
+      ctx.scale(scale, scale);
       ctx.beginPath();
       ctx.moveTo(-9, -3);
       ctx.lineTo(8, 4);
@@ -662,11 +775,36 @@
       ctx.arc(10, 4.5, 4, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
-      ctx.fillStyle = PALETTE.text;
-      ctx.font = '600 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+    }
+
+    function drawBench(o, hasWrench) {
+      const px = o.x * TILE;
+      const py = o.y * TILE;
+      ctx.fillStyle = PALETTE.bench;
+      roundRect(px + 5, py + 12, TILE - 10, TILE - 22, 4);
+      ctx.fill();
+      ctx.fillStyle = PALETTE.benchTop;
+      roundRect(px + 8, py + 15, TILE - 16, 12, 3);
+      ctx.fill();
+
+      if (hasWrench) {
+        drawWrenchIcon(px + TILE / 2, py + 38, 1);
+        ctx.fillStyle = PALETTE.text;
+        ctx.font = '600 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+        ctx.fillText('WRENCH', px + TILE / 2, py + TILE - 12);
+      } else {
+        ctx.strokeStyle = 'rgba(139, 151, 173, 0.55)';
+        ctx.setLineDash([4, 3]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(px + 15, py + 30, TILE - 30, 17);
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#8b97ad';
+        ctx.font = '600 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+        ctx.fillText('EMPTY', px + TILE / 2, py + TILE - 12);
+      }
+
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('WRENCH', px + TILE / 2, py + TILE - 12);
     }
 
     function drawObjects() {
@@ -674,7 +812,7 @@
         const o = objects[i];
         if (o.kind === 'equipment') drawEngine(o);
         else if (o.kind === 'console') drawConsole(o);
-        else if (o.kind === 'bench') drawBench(o);
+        else if (o.kind === 'bench') drawBench(o, !(hand.type === 'tool' && hand.id === 'wrench'));
       }
     }
 
@@ -738,6 +876,10 @@
       ctx.lineTo(baseX - perpX * r * 0.5, baseY - perpY * r * 0.5);
       ctx.closePath();
       ctx.fill();
+
+      if (hand.type === 'tool' && hand.id === 'wrench') {
+        drawWrenchIcon(px + dir.x * r + 8, py + dir.y * r - 4, 0.65);
+      }
     }
 
     function render() {
