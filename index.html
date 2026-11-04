@@ -181,10 +181,15 @@
 
   const STATE_LOADING = 'LOADING';
   const STATE_FLIGHT = 'FLIGHT';
+  const STATE_UNLOAD = 'UNLOAD';
 
   let gameState = STATE_LOADING;
   let flightProgress = 0;
   let flightBreakdownTimer = 0;
+
+  let totalCratesDelivered = 0;
+  let cratesDeliveredThisRun = 0;
+  let engineDamageTakenThisRun = 0;
 
   const RESERVED = [
     { x: 1, y: 2 },
@@ -581,6 +586,7 @@
     }
 
     if (board[target.y][target.x] === T_RAMP) {
+      if (gameState === STATE_UNLOAD && hand.type === 'crate') return { kind: 'deliver-crate', label: 'E: deliver crate' };
       if (hand.type === 'crate') return { kind: 'return-crate', label: 'E: return crate to pile' };
       if (hand.type === null && dockPile > 0) {
         return { kind: 'take-crate', label: 'E: take crate (' + dockPile + ')' };
@@ -650,6 +656,7 @@
     describeInteraction: describeInteraction,
     STATE_LOADING: STATE_LOADING,
     STATE_FLIGHT: STATE_FLIGHT,
+    STATE_UNLOAD: STATE_UNLOAD,
     getGameState: function () { return gameState; },
     getFlightProgress: function () { return flightProgress; }
   };
@@ -778,6 +785,114 @@
       engine.health = Math.min(100, engine.health + dt * 25);
     }
 
+    function deliverCrate() {
+      if (gameState !== STATE_UNLOAD || hand.type !== 'crate') return;
+      cratesDeliveredThisRun++;
+      totalCratesDelivered++;
+      hand.type = null;
+      hand.id = null;
+      if (crates.length === 0) {
+        showSettlement();
+      }
+    }
+
+    function showSettlement() {
+      gameState = 'SETTLEMENT';
+      const engine = getEngineObject();
+      const healthLost = Math.max(0, 100 - (engine ? engine.health : 100));
+      engineDamageTakenThisRun = healthLost;
+      const grossPay = cratesDeliveredThisRun * 100;
+      const repairFees = Math.floor(healthLost * 2);
+      const netCredits = grossPay - repairFees;
+      renderSettlement(grossPay, repairFees, netCredits);
+    }
+
+    function renderSettlement(grossPay, repairFees, netCredits) {
+      const overlay = document.createElement('div');
+      overlay.id = 'settlement';
+      overlay.style.position = 'fixed';
+      overlay.style.top = '0';
+      overlay.style.left = '0';
+      overlay.style.width = '100%';
+      overlay.style.height = '100%';
+      overlay.style.background = 'rgba(9, 13, 21, 0.92)';
+      overlay.style.display = 'flex';
+      overlay.style.flexDirection = 'column';
+      overlay.style.alignItems = 'center';
+      overlay.style.justifyContent = 'center';
+      overlay.style.zIndex = '50';
+      overlay.style.fontFamily = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+      overlay.style.color = '#e8e4d6';
+
+      const card = document.createElement('div');
+      card.style.background = 'linear-gradient(180deg, #1a2335, #131a28)';
+      card.style.border = '1px solid #2a3850';
+      card.style.borderRadius = '12px';
+      card.style.padding = '32px 40px';
+      card.style.minWidth = '320px';
+
+      const title = document.createElement('h2');
+      title.textContent = 'Run Complete';
+      title.style.margin = '0 0 20px';
+      title.style.color = '#f2a93b';
+      title.style.fontSize = '20px';
+      card.appendChild(title);
+
+      const row = (label, value, color) => {
+        const el = document.createElement('div');
+        el.style.display = 'flex';
+        el.style.justifyContent = 'space-between';
+        el.style.padding = '8px 0';
+        el.style.borderBottom = '1px solid #2a3850';
+        const lb = document.createElement('span');
+        lb.textContent = label;
+        lb.style.color = '#8b97ad';
+        el.appendChild(lb);
+        const vb = document.createElement('span');
+        vb.textContent = value;
+        vb.style.color = color || '#e8e4d6';
+        vb.style.fontVariantNumeric = 'tabular-nums';
+        el.appendChild(vb);
+        card.appendChild(el);
+      };
+
+      row('Crates Delivered', cratesDeliveredThisRun);
+      row('Gross Pay', '§' + grossPay, '#6fcf7c');
+      row('Engine Repair Fees', '§' + repairFees, '#e5533d');
+      row('Net Credits', '§' + netCredits, '#4cc9b8');
+
+      const btn = document.createElement('button');
+      btn.textContent = 'Start Next Run';
+      btn.style.marginTop = '24px';
+      btn.style.padding = '10px 24px';
+      btn.style.background = '#f2a93b';
+      btn.style.color = '#090d15';
+      btn.style.border = 'none';
+      btn.style.borderRadius = '6px';
+      btn.style.fontWeight = '700';
+      btn.style.cursor = 'pointer';
+      btn.onclick = resetForNextRun;
+      card.appendChild(btn);
+
+      overlay.appendChild(card);
+      document.body.appendChild(overlay);
+    }
+
+    function resetForNextRun() {
+      const overlay = document.getElementById('settlement');
+      if (overlay) document.body.removeChild(overlay);
+      crates.length = 0;
+      dockPile = MISSION_CRATES;
+      const engine = getEngineObject();
+      if (engine) engine.health = 100;
+      gameState = STATE_LOADING;
+      flightProgress = 0;
+      flightBreakdownTimer = 8 + Math.random() * 4;
+      cratesDeliveredThisRun = 0;
+      engineDamageTakenThisRun = 0;
+      updateHud();
+    }
+
     function handlePressE() {
       const info = currentInteraction();
       if (info.kind === 'take-tool') takeTool(hand, WRENCH);
@@ -787,6 +902,7 @@
       else if (info.kind === 'place-crate') placeHeldCrate();
       else if (info.kind === 'pick-crate') pickCrateAtTarget();
       else if (info.kind === 'launch') startFlight();
+      else if (info.kind === 'deliver-crate') deliverCrate();
       updateHud();
     }
 
@@ -852,14 +968,15 @@
       }
 
       const state = gameState;
-      const stateText = state === STATE_FLIGHT ? 'FLIGHT' : 'LOADING';
+      const stateText = state === STATE_FLIGHT ? 'FLIGHT' : state === STATE_UNLOAD ? 'UNLOAD' : 'LOADING';
       if (stateText !== hudState) {
         stateEl.textContent = stateText;
         hudState = stateText;
       }
 
       if (progressEl && progressBarEl) {
-        if (state === STATE_FLIGHT) {
+        const showProgress = state === STATE_FLIGHT || state === STATE_UNLOAD;
+        if (showProgress) {
           progressEl.style.display = 'block';
           const pct = Math.round(flightProgress);
           if (pct !== hudProgress) {
@@ -893,6 +1010,10 @@
           const flightSpeed = 0.30 + 0.70 * (engine.health / 100);
           flightProgress += flightSpeed * dt;
           if (flightProgress > 100) flightProgress = 100;
+          if (flightProgress >= 100) {
+            gameState = STATE_UNLOAD;
+            cratesDeliveredThisRun = 0;
+          }
 
           flightBreakdownTimer -= dt;
           if (flightBreakdownTimer <= 0) {
