@@ -174,7 +174,7 @@ test('describeInteraction reports the relevant action for every target', () => {
   assert.equal(Logic.describeInteraction(board, objects, [], atEngine, empty, 4).kind, 'none');
 
   const atConsole = { x: 7.5, y: 3.5, facing: Logic.DOWN };
-  assert.equal(Logic.describeInteraction(board, objects, [], atConsole, empty, 4).kind, 'launch');
+  assert.equal(Logic.describeInteraction(board, objects, [crate('c1', 5, 5)], atConsole, empty, 4).kind, 'launch');
 
   const atRamp = { x: 1.5, y: 2.5, facing: Logic.LEFT };
   assert.equal(Logic.describeInteraction(board, objects, [], atRamp, empty, 4).kind, 'take-crate');

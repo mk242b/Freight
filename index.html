@@ -106,6 +106,21 @@
     font-variant-numeric: tabular-nums;
   }
   .note b { color: var(--text); font-weight: 600; }
+  .progress {
+    margin: 10px 4px 0;
+    height: 8px;
+    background: #0e1523;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .progress > div {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--amber), var(--teal));
+    transition: width 0.1s linear;
+  }
+  .progress.warn > div { background: var(--red); }
 </style>
 </head>
 <body>
@@ -118,10 +133,12 @@
       <div>Hands <b id="hud-hands">Empty</b></div>
       <div>Hold <b id="hud-hold">0</b></div>
       <div>Dock <b id="hud-dock">4</b></div>
+      <div>State <b id="hud-state">LOADING</b></div>
     </div>
     <div class="hint">Move with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> or the arrow keys. Face the ramp to take a crate from the dock, then face a floor tile and press <kbd>E</kbd> to place it. The ghost turns red when a spot would be invalid.</div>
   </header>
   <canvas id="game" width="1048" height="448" aria-label="Freight starter ship board with dock"></canvas>
+  <div class="progress" id="flight-progress"><div></div></div>
   <p class="note">Starter ship · <b>17 × 8</b> grid · <b>56 px</b> tiles · <b>28</b> floor cells · <b>19</b> usable · <b>4</b> small crates on the dock</p>
     <noscript>This prototype needs JavaScript enabled.</noscript>
 </div>
@@ -161,6 +178,13 @@
   const CARRY_SPEED = 3.8;
   const PLAYER_RADIUS = 0.27;
   const PLACEMENT_CLEARANCE = 0.3;
+
+  const STATE_LOADING = 'LOADING';
+  const STATE_FLIGHT = 'FLIGHT';
+
+  let gameState = STATE_LOADING;
+  let flightProgress = 0;
+  let flightBreakdownTimer = 0;
 
   const RESERVED = [
     { x: 1, y: 2 },
@@ -524,7 +548,8 @@
     return 'Empty';
   }
 
-  function describeInteraction(board, objects, crates, player, hand, dockPile) {
+  function describeInteraction(board, objects, crates, player, hand, dockPile, gameState) {
+    if (gameState === undefined) gameState = STATE_LOADING;
     const none = { kind: 'none', label: '' };
     const target = targetCell(player);
     if (!insideBoard(target.x, target.y)) return none;
@@ -537,11 +562,15 @@
         return { kind: 'none', label: 'Hands full' };
       }
       if (object.id === 'engine') {
+        if (gameState === STATE_FLIGHT && toolIsTaken(hand, WRENCH)) return { kind: 'repair', label: 'Hold E: repair' };
         if (toolIsTaken(hand, WRENCH)) return { kind: 'repair', label: 'Hold E: repair' };
         return { kind: 'none', label: 'Needs wrench' };
       }
       if (object.kind === 'console') {
-        return { kind: 'launch', label: 'E: launch (step 4)' };
+        if (gameState === STATE_FLIGHT) return { kind: 'none', label: 'In flight' };
+        if (crates.length < 1) return { kind: 'none', label: 'Load cargo first' };
+        if (hand.type !== null) return { kind: 'none', label: 'Hands full' };
+        return { kind: 'launch', label: 'E: launch' };
       }
       return none;
     }
@@ -618,7 +647,11 @@
     returnTool: returnTool,
     toolIsTaken: toolIsTaken,
     handLabel: handLabel,
-    describeInteraction: describeInteraction
+    describeInteraction: describeInteraction,
+    STATE_LOADING: STATE_LOADING,
+    STATE_FLIGHT: STATE_FLIGHT,
+    getGameState: function () { return gameState; },
+    getFlightProgress: function () { return flightProgress; }
   };
 
   global.FreightLogic = Logic;
@@ -633,6 +666,9 @@
     const handsEl = document.getElementById('hud-hands');
     const holdEl = document.getElementById('hud-hold');
     const dockEl = document.getElementById('hud-dock');
+    const stateEl = document.getElementById('hud-state');
+    const progressEl = document.getElementById('flight-progress');
+    const progressBarEl = progressEl ? progressEl.querySelector('div') : null;
 
     const board = buildStarterBoard();
     const objects = starterObjects();
@@ -664,6 +700,8 @@
     let hudHands = '';
     let hudHold = '';
     let hudDock = '';
+    let hudState = '';
+    let hudProgress = -1;
 
     function activeDirection() {
       for (let i = heldCodes.length - 1; i >= 0; i--) {
@@ -674,7 +712,7 @@
     }
 
     function currentInteraction() {
-      return describeInteraction(board, objects, crates, player, hand, dockPile);
+      return describeInteraction(board, objects, crates, player, hand, dockPile, gameState);
     }
 
     function takeCrateFromPile() {
@@ -709,6 +747,37 @@
       hand.id = crate.id;
     }
 
+    function startFlight() {
+      if (gameState !== STATE_LOADING) return false;
+      if (crates.length < 1) return false;
+      if (hand.type !== null) return false;
+      gameState = STATE_FLIGHT;
+      flightProgress = 0;
+      flightBreakdownTimer = 8 + Math.random() * 4;
+      return true;
+    }
+
+    function getEngineObject() {
+      for (let i = 0; i < objects.length; i++) {
+        if (objects[i].id === 'engine') return objects[i];
+      }
+      return null;
+    }
+
+    function triggerBreakdown() {
+      const engine = getEngineObject();
+      if (!engine) return;
+      engine.health = Math.max(0, engine.health - 20);
+      flightBreakdownTimer = 8 + Math.random() * 4;
+    }
+
+    function applyRepair(dt) {
+      const engine = getEngineObject();
+      if (!engine) return;
+      if (engine.health >= 100) return;
+      engine.health = Math.min(100, engine.health + dt * 25);
+    }
+
     function handlePressE() {
       const info = currentInteraction();
       if (info.kind === 'take-tool') takeTool(hand, WRENCH);
@@ -717,6 +786,7 @@
       else if (info.kind === 'return-crate') returnCrateToPile();
       else if (info.kind === 'place-crate') placeHeldCrate();
       else if (info.kind === 'pick-crate') pickCrateAtTarget();
+      else if (info.kind === 'launch') startFlight();
       updateHud();
     }
 
@@ -780,6 +850,32 @@
         dockEl.textContent = dock;
         hudDock = dock;
       }
+
+      const state = gameState;
+      const stateText = state === STATE_FLIGHT ? 'FLIGHT' : 'LOADING';
+      if (stateText !== hudState) {
+        stateEl.textContent = stateText;
+        hudState = stateText;
+      }
+
+      if (progressEl && progressBarEl) {
+        if (state === STATE_FLIGHT) {
+          progressEl.style.display = 'block';
+          const pct = Math.round(flightProgress);
+          if (pct !== hudProgress) {
+            progressBarEl.style.width = pct + '%';
+            hudProgress = pct;
+          }
+          const engine = getEngineObject();
+          if (engine && engine.health < 30) {
+            progressEl.classList.add('warn');
+          } else {
+            progressEl.classList.remove('warn');
+          }
+        } else {
+          progressEl.style.display = 'none';
+        }
+      }
     }
 
     function update(dt) {
@@ -790,6 +886,29 @@
         const step = speed * dt;
         moveWithCollision(board, objects, player, DIRS[dir].x * step, DIRS[dir].y * step, PLAYER_RADIUS, crates);
       }
+
+      if (gameState === STATE_FLIGHT) {
+        const engine = getEngineObject();
+        if (engine) {
+          const flightSpeed = 0.30 + 0.70 * (engine.health / 100);
+          flightProgress += flightSpeed * dt;
+          if (flightProgress > 100) flightProgress = 100;
+
+          flightBreakdownTimer -= dt;
+          if (flightBreakdownTimer <= 0) {
+            triggerBreakdown();
+          }
+
+          if (eHeld && hand.type === 'tool' && hand.id === WRENCH) {
+            const target = targetCell(player);
+            const obj = objectAt(objects, target.x, target.y);
+            if (obj && obj.id === 'engine') {
+              applyRepair(dt);
+            }
+          }
+        }
+      }
+
       updateHud();
     }
 
