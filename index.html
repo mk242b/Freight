@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Freight — Step 1: Spatial Foundation</title>
+<title>Freight — Step 3: Cargo & Reachability</title>
 <style>
   :root {
     --space: #090d15;
@@ -24,7 +24,7 @@
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   body { display: flex; justify-content: center; padding: 24px 16px 40px; }
-  #app { width: min(952px, 100%); }
+  #app { width: min(1048px, 100%); }
   header {
     display: flex;
     align-items: center;
@@ -92,7 +92,7 @@
   canvas {
     display: block;
     width: 100%;
-    max-width: 952px;
+    max-width: 1048px;
     height: auto;
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -111,16 +111,18 @@
 <body>
 <div id="app">
   <header>
-    <div class="brand">FREIGHT <span>Step 2 · Hands & interaction</span></div>
+    <div class="brand">FREIGHT <span>Step 3 · Cargo & reachability</span></div>
     <div class="stats">
       <div>Facing <b id="hud-facing">down</b></div>
       <div>Target <b id="hud-target">—</b></div>
       <div>Hands <b id="hud-hands">Empty</b></div>
+      <div>Hold <b id="hud-hold">0</b></div>
+      <div>Dock <b id="hud-dock">4</b></div>
     </div>
-    <div class="hint">Move with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> or the arrow keys. Face the wrench bench and press <kbd>E</kbd> to take or return the wrench.</div>
+    <div class="hint">Move with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> or the arrow keys. Face the ramp to take a crate from the dock, then face a floor tile and press <kbd>E</kbd> to place it. The ghost turns red when a spot would be invalid.</div>
   </header>
-  <canvas id="game" width="952" height="448" aria-label="Freight starter ship board"></canvas>
-  <p class="note">Starter ship · <b>17 × 8</b> grid · <b>56 px</b> tiles · <b>28</b> floor cells · <b>19</b> usable</p>
+  <canvas id="game" width="1048" height="448" aria-label="Freight starter ship board with dock"></canvas>
+  <p class="note">Starter ship · <b>17 × 8</b> grid · <b>56 px</b> tiles · <b>28</b> floor cells · <b>19</b> usable · <b>4</b> small crates on the dock</p>
     <noscript>This prototype needs JavaScript enabled.</noscript>
 </div>
 <script id="game">
@@ -132,6 +134,9 @@
   const ROWS = 8;
   const WIDTH = COLS * TILE;
   const HEIGHT = ROWS * TILE;
+  const DOCK_MARGIN = 96;
+  const VIEW_WIDTH = DOCK_MARGIN + WIDTH;
+  const MISSION_CRATES = 4;
 
   const T_VOID = 0;
   const T_FLOOR = 1;
@@ -153,7 +158,9 @@
   const DIR_NAMES = ['up', 'right', 'down', 'left'];
 
   const PLAYER_SPEED = 4.4;
+  const CARRY_SPEED = 3.8;
   const PLAYER_RADIUS = 0.27;
+  const PLACEMENT_CLEARANCE = 0.3;
 
   const RESERVED = [
     { x: 1, y: 2 },
@@ -176,12 +183,18 @@
     red: '#e5533d',
     green: '#6fcf7c',
     text: '#e8e4d6',
+    muted: '#8b97ad',
     engine: '#2b3a55',
     engineDark: '#172033',
     engineCore: '#f2a93b',
     bench: '#4a3524',
     benchTop: '#6b4a2f',
-    panel: '#1e293b'
+    panel: '#1e293b',
+    crate: '#b88344',
+    crateDark: '#8f6230',
+    crateStrap: '#6d4a22',
+    dock: '#232830',
+    dockLine: '#1a1e26'
   };
 
   function buildStarterBoard() {
@@ -250,11 +263,48 @@
     return null;
   }
 
-  function isSolidCell(board, objects, x, y) {
+  function isReserved(x, y) {
+    for (let i = 0; i < RESERVED.length; i++) {
+      if (RESERVED[i].x === x && RESERVED[i].y === y) return true;
+    }
+    return false;
+  }
+
+  function crateAt(crates, x, y) {
+    for (let i = 0; i < crates.length; i++) {
+      if (crates[i].x === x && crates[i].y === y) return crates[i];
+    }
+    return null;
+  }
+
+  function addCrate(crates, id, x, y) {
+    const crate = { id: id, x: x, y: y };
+    crates.push(crate);
+    return crate;
+  }
+
+  function removeCrateAt(crates, x, y) {
+    for (let i = 0; i < crates.length; i++) {
+      if (crates[i].x === x && crates[i].y === y) return crates.splice(i, 1)[0];
+    }
+    return null;
+  }
+
+  function isFreeFloor(board, objects, crates, x, y) {
+    if (!insideBoard(x, y)) return false;
+    if (board[y][x] !== T_FLOOR) return false;
+    if (objectAt(objects, x, y)) return false;
+    if (crateAt(crates, x, y)) return false;
+    return true;
+  }
+
+  function isSolidCell(board, objects, x, y, crates) {
     if (!insideBoard(x, y)) return true;
     const tile = board[y][x];
     if (tile === T_WALL || tile === T_VOID || tile === T_RAMP || tile === T_DOOR) return true;
-    return Boolean(objectAt(objects, x, y));
+    if (objectAt(objects, x, y)) return true;
+    if (crates && crateAt(crates, x, y)) return true;
+    return false;
   }
 
   function circleHitsCell(px, py, r, cx, cy) {
@@ -265,21 +315,21 @@
     return dx * dx + dy * dy < r * r - 1e-9;
   }
 
-  function collidesAt(board, objects, px, py, r) {
+  function collidesAt(board, objects, px, py, r, crates) {
     const x0 = Math.floor(px - r);
     const x1 = Math.floor(px + r);
     const y0 = Math.floor(py - r);
     const y1 = Math.floor(py + r);
     for (let cy = y0; cy <= y1; cy++) {
       for (let cx = x0; cx <= x1; cx++) {
-        if (!isSolidCell(board, objects, cx, cy)) continue;
+        if (!isSolidCell(board, objects, cx, cy, crates)) continue;
         if (circleHitsCell(px, py, r, cx, cy)) return true;
       }
     }
     return false;
   }
 
-  function resolveAxis(board, objects, player, delta, axis, r) {
+  function resolveAxis(board, objects, player, delta, axis, r, crates) {
     if (delta === 0) return;
     if (axis === 'x') player.x += delta;
     else player.y += delta;
@@ -291,7 +341,7 @@
 
     for (let cy = y0; cy <= y1; cy++) {
       for (let cx = x0; cx <= x1; cx++) {
-        if (!isSolidCell(board, objects, cx, cy)) continue;
+        if (!isSolidCell(board, objects, cx, cy, crates)) continue;
         if (!circleHitsCell(player.x, player.y, r, cx, cy)) continue;
         if (axis === 'x') player.x = delta > 0 ? cx - r : cx + 1 + r;
         else player.y = delta > 0 ? cy - r : cy + 1 + r;
@@ -299,9 +349,9 @@
     }
   }
 
-  function moveWithCollision(board, objects, player, dx, dy, r) {
-    resolveAxis(board, objects, player, dx, 'x', r);
-    resolveAxis(board, objects, player, dy, 'y', r);
+  function moveWithCollision(board, objects, player, dx, dy, r, crates) {
+    resolveAxis(board, objects, player, dx, 'x', r, crates);
+    resolveAxis(board, objects, player, dy, 'y', r, crates);
   }
 
   function targetCell(player) {
@@ -312,10 +362,11 @@
     };
   }
 
-  function tileName(board, objects, x, y) {
+  function tileName(board, objects, x, y, crates) {
     if (!insideBoard(x, y)) return 'Space';
     const object = objectAt(objects, x, y);
     if (object) return object.name;
+    if (crates && crateAt(crates, x, y)) return 'Crate';
     const tile = board[y][x];
     if (tile === T_FLOOR) return 'Floor';
     if (tile === T_WALL) return 'Wall';
@@ -328,6 +379,117 @@
     if (health > 60) return PALETTE.green;
     if (health >= 30) return PALETTE.amber;
     return PALETTE.red;
+  }
+
+  function reachabilityReport(board, objects, crates, extraCrate) {
+    const occupied = crates.slice();
+    if (extraCrate) occupied.push(extraCrate);
+
+    const seen = new Set();
+    const queue = [];
+    for (let i = 0; i < RESERVED.length; i++) {
+      const cell = RESERVED[i];
+      if (board[cell.y][cell.x] !== T_FLOOR) {
+        return { ok: false, reason: 'Reserved cells blocked' };
+      }
+      if (objectAt(objects, cell.x, cell.y) || crateAt(occupied, cell.x, cell.y)) {
+        return { ok: false, reason: 'Reserved cells blocked' };
+      }
+      const key = cell.x + ',' + cell.y;
+      if (!seen.has(key)) {
+        seen.add(key);
+        queue.push(cell);
+      }
+    }
+
+    let head = 0;
+    while (head < queue.length) {
+      const cell = queue[head++];
+      for (let d = 0; d < DIRS.length; d++) {
+        const nx = cell.x + DIRS[d].x;
+        const ny = cell.y + DIRS[d].y;
+        if (board[ny] === undefined || board[ny][nx] === undefined) continue;
+        if (board[ny][nx] !== T_FLOOR) continue;
+        if (objectAt(objects, nx, ny) || crateAt(occupied, nx, ny)) continue;
+        const key = nx + ',' + ny;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        queue.push({ x: nx, y: ny });
+      }
+    }
+
+    for (let i = 0; i < objects.length; i++) {
+      const station = objects[i];
+      let reachable = false;
+      for (let y = station.y; y < station.y + station.h && !reachable; y++) {
+        for (let x = station.x; x < station.x + station.w && !reachable; x++) {
+          for (let d = 0; d < DIRS.length; d++) {
+            const nx = x + DIRS[d].x;
+            const ny = y + DIRS[d].y;
+            if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+            if (board[ny][nx] !== T_FLOOR) continue;
+            if (objectAt(objects, nx, ny) || crateAt(occupied, nx, ny)) continue;
+            if (seen.has(nx + ',' + ny)) {
+              reachable = true;
+              break;
+            }
+          }
+        }
+      }
+      if (!reachable) {
+        return { ok: false, reason: 'Would block access: ' + station.name };
+      }
+    }
+
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        if (board[y][x] !== T_FLOOR) continue;
+        if (objectAt(objects, x, y) || crateAt(occupied, x, y)) continue;
+        if (!seen.has(x + ',' + y)) {
+          return { ok: false, reason: 'Would cut the hold in two' };
+        }
+      }
+    }
+
+    return { ok: true, reason: '' };
+  }
+
+  function canPlaceCrate(board, objects, crates, player, x, y) {
+    if (!insideBoard(x, y)) return { ok: false, reason: 'Out of bounds' };
+    if (board[y][x] !== T_FLOOR) return { ok: false, reason: 'No floor here' };
+    if (isReserved(x, y)) return { ok: false, reason: 'Keep the ramp access clear' };
+    const object = objectAt(objects, x, y);
+    if (object) return { ok: false, reason: 'Occupied by ' + object.name };
+    if (crateAt(crates, x, y)) return { ok: false, reason: 'Crate already here' };
+
+    const nx = clamp(player.x, x, x + 1);
+    const ny = clamp(player.y, y, y + 1);
+    const dx = player.x - nx;
+    const dy = player.y - ny;
+    if (Math.sqrt(dx * dx + dy * dy) < PLACEMENT_CLEARANCE) {
+      return { ok: false, reason: 'Too close to you' };
+    }
+
+    return reachabilityReport(board, objects, crates, { x: x, y: y });
+  }
+
+  function placementAnchor(board, objects, crates, player) {
+    const base = targetCell(player);
+    const baseCheck = canPlaceCrate(board, objects, crates, player, base.x, base.y);
+    if (baseCheck.reason !== 'Too close to you') {
+      return { x: base.x, y: base.y, jumped: false, check: baseCheck };
+    }
+
+    // The adjacent tile is free floor but overlaps the player. Per the GDD
+    // the ghost jumps one tile farther forward in the facing direction.
+    const dir = DIRS[player.facing];
+    const far = { x: base.x + dir.x, y: base.y + dir.y };
+    return {
+      x: far.x,
+      y: far.y,
+      jumped: true,
+      check: canPlaceCrate(board, objects, crates, player, far.x, far.y)
+    };
   }
 
   const WRENCH = 'wrench';
@@ -362,19 +524,49 @@
     return 'Empty';
   }
 
-  function actionLabel(hand, object) {
-    if (!object) return '';
-    if (object.kind === 'bench') {
-      if (toolIsTaken(hand, WRENCH)) return 'E: return wrench';
-      if (hand.type === null) return 'E: take wrench';
-      return 'Hands full';
+  function describeInteraction(board, objects, crates, player, hand, dockPile) {
+    const none = { kind: 'none', label: '' };
+    const target = targetCell(player);
+    if (!insideBoard(target.x, target.y)) return none;
+
+    const object = objectAt(objects, target.x, target.y);
+    if (object) {
+      if (object.kind === 'bench') {
+        if (toolIsTaken(hand, WRENCH)) return { kind: 'return-tool', label: 'E: return wrench' };
+        if (hand.type === null) return { kind: 'take-tool', label: 'E: take wrench' };
+        return { kind: 'none', label: 'Hands full' };
+      }
+      if (object.id === 'engine') {
+        if (toolIsTaken(hand, WRENCH)) return { kind: 'repair', label: 'Hold E: repair' };
+        return { kind: 'none', label: 'Needs wrench' };
+      }
+      if (object.kind === 'console') {
+        return { kind: 'launch', label: 'E: launch (step 4)' };
+      }
+      return none;
     }
-    if (object.id === 'engine') {
-      if (toolIsTaken(hand, WRENCH)) return 'Hold E: repair';
-      return 'Needs wrench';
+
+    if (crateAt(crates, target.x, target.y)) {
+      if (hand.type === null) return { kind: 'pick-crate', label: 'E: take crate' };
+      return { kind: 'none', label: 'Hands full' };
     }
-    if (object.kind === 'console') return 'E: launch (step 4)';
-    return '';
+
+    if (board[target.y][target.x] === T_RAMP) {
+      if (hand.type === 'crate') return { kind: 'return-crate', label: 'E: return crate to pile' };
+      if (hand.type === null && dockPile > 0) {
+        return { kind: 'take-crate', label: 'E: take crate (' + dockPile + ')' };
+      }
+      if (hand.type === null) return { kind: 'none', label: 'Dock pile empty' };
+      return { kind: 'none', label: 'Hands full' };
+    }
+
+    if (board[target.y][target.x] === T_FLOOR && hand.type === 'crate') {
+      const anchor = placementAnchor(board, objects, crates, player);
+      if (anchor.check.ok) return { kind: 'place-crate', label: 'E: place crate' };
+      return { kind: 'none', label: anchor.check.reason };
+    }
+
+    return none;
   }
 
   const Logic = {
@@ -383,6 +575,9 @@
     ROWS: ROWS,
     WIDTH: WIDTH,
     HEIGHT: HEIGHT,
+    DOCK_MARGIN: DOCK_MARGIN,
+    VIEW_WIDTH: VIEW_WIDTH,
+    MISSION_CRATES: MISSION_CRATES,
     T_VOID: T_VOID,
     T_FLOOR: T_FLOOR,
     T_WALL: T_WALL,
@@ -395,6 +590,7 @@
     DIRS: DIRS,
     DIR_NAMES: DIR_NAMES,
     PLAYER_SPEED: PLAYER_SPEED,
+    CARRY_SPEED: CARRY_SPEED,
     PLAYER_RADIUS: PLAYER_RADIUS,
     RESERVED: RESERVED,
     buildStarterBoard: buildStarterBoard,
@@ -402,19 +598,27 @@
     starterPlayer: starterPlayer,
     insideBoard: insideBoard,
     objectAt: objectAt,
+    isReserved: isReserved,
+    crateAt: crateAt,
+    addCrate: addCrate,
+    removeCrateAt: removeCrateAt,
+    isFreeFloor: isFreeFloor,
     isSolidCell: isSolidCell,
     collidesAt: collidesAt,
     moveWithCollision: moveWithCollision,
     targetCell: targetCell,
     tileName: tileName,
     healthColor: healthColor,
+    reachabilityReport: reachabilityReport,
+    canPlaceCrate: canPlaceCrate,
+    placementAnchor: placementAnchor,
     WRENCH: WRENCH,
     createHand: createHand,
     takeTool: takeTool,
     returnTool: returnTool,
     toolIsTaken: toolIsTaken,
     handLabel: handLabel,
-    actionLabel: actionLabel
+    describeInteraction: describeInteraction
   };
 
   global.FreightLogic = Logic;
@@ -427,13 +631,18 @@
     const facingEl = document.getElementById('hud-facing');
     const targetEl = document.getElementById('hud-target');
     const handsEl = document.getElementById('hud-hands');
+    const holdEl = document.getElementById('hud-hold');
+    const dockEl = document.getElementById('hud-dock');
 
     const board = buildStarterBoard();
     const objects = starterObjects();
     const player = starterPlayer();
+    const crates = [];
+    let dockPile = MISSION_CRATES;
+    let crateSeq = 0;
 
     const dpr = Math.min(global.devicePixelRatio || 1, 2);
-    canvas.width = WIDTH * dpr;
+    canvas.width = VIEW_WIDTH * dpr;
     canvas.height = HEIGHT * dpr;
 
     const KEY_DIR = {
@@ -449,12 +658,12 @@
 
     const heldCodes = [];
     let eHeld = false;
+    const hand = createHand();
     let hudFacing = '';
     let hudTarget = '';
     let hudHands = '';
-
-    // Task 2.1 — Hand state & key handlers
-    const hand = createHand(); // 'crate' | 'tool' | null
+    let hudHold = '';
+    let hudDock = '';
 
     function activeDirection() {
       for (let i = heldCodes.length - 1; i >= 0; i--) {
@@ -462,6 +671,53 @@
         if (dir !== undefined) return dir;
       }
       return null;
+    }
+
+    function currentInteraction() {
+      return describeInteraction(board, objects, crates, player, hand, dockPile);
+    }
+
+    function takeCrateFromPile() {
+      if (dockPile <= 0 || hand.type !== null) return;
+      dockPile--;
+      crateSeq++;
+      hand.type = 'crate';
+      hand.id = 'crate-' + crateSeq;
+    }
+
+    function returnCrateToPile() {
+      if (hand.type !== 'crate') return;
+      dockPile = Math.min(MISSION_CRATES, dockPile + 1);
+      hand.type = null;
+      hand.id = null;
+    }
+
+    function placeHeldCrate() {
+      if (hand.type !== 'crate') return;
+      const anchor = placementAnchor(board, objects, crates, player);
+      if (!anchor.check.ok) return;
+      addCrate(crates, hand.id, anchor.x, anchor.y);
+      hand.type = null;
+      hand.id = null;
+    }
+
+    function pickCrateAtTarget() {
+      const target = targetCell(player);
+      const crate = removeCrateAt(crates, target.x, target.y);
+      if (!crate) return;
+      hand.type = 'crate';
+      hand.id = crate.id;
+    }
+
+    function handlePressE() {
+      const info = currentInteraction();
+      if (info.kind === 'take-tool') takeTool(hand, WRENCH);
+      else if (info.kind === 'return-tool') returnTool(hand, WRENCH);
+      else if (info.kind === 'take-crate') takeCrateFromPile();
+      else if (info.kind === 'return-crate') returnCrateToPile();
+      else if (info.kind === 'place-crate') placeHeldCrate();
+      else if (info.kind === 'pick-crate') pickCrateAtTarget();
+      updateHud();
     }
 
     function onKeyDown(event) {
@@ -488,68 +744,41 @@
       if (index !== -1) heldCodes.splice(index, 1);
     }
 
-    function handLabel() {
-      if (hand.type === 'tool' && hand.id === 'wrench') return 'Wrench';
-      if (hand.type === 'crate') return 'Crate';
-      return 'Empty';
-    }
-
-    function actionLabel(object) {
-      if (!object) return '';
-      if (object.kind === 'bench') {
-        if (hand.type === null) return 'E: take wrench';
-        if (hand.type === 'tool' && hand.id === 'wrench') return 'E: return wrench';
-        return 'Hands full';
-      }
-      if (object.id === 'engine') {
-        if (hand.type === 'tool' && hand.id === 'wrench') return 'Hold E: repair';
-        return 'Needs wrench';
-      }
-      if (object.kind === 'console') return 'E: launch (step 4)';
-      return '';
-    }
-
-    function handlePressE() {
-      const target = targetCell(player);
-      if (!insideBoard(target.x, target.y)) return;
-
-      const object = objectAt(objects, target.x, target.y);
-      if (!object) return;
-
-      if (object.kind === 'bench') {
-        if (hand.type === null) {
-          hand.type = 'tool';
-          hand.id = 'wrench';
-        } else if (hand.type === 'tool' && hand.id === 'wrench') {
-          hand.type = null;
-          hand.id = null;
-        }
-        updateHud();
-      }
-    }
-
     function updateHud() {
       const facing = DIR_NAMES[player.facing];
       if (facing !== hudFacing) {
         facingEl.textContent = facing;
         hudFacing = facing;
       }
+
       const target = targetCell(player);
       let label = '—';
       if (insideBoard(target.x, target.y)) {
-        const object = objectAt(objects, target.x, target.y);
-        label = tileName(board, objects, target.x, target.y) + ' · x' + target.x + ' y' + (target.y + 1);
-        const action = actionLabel(object);
-        if (action) label += ' · ' + action;
+        label = tileName(board, objects, target.x, target.y, crates) + ' · x' + target.x + ' y' + (target.y + 1);
+        const info = currentInteraction();
+        if (info.label) label += ' · ' + info.label;
       }
       if (label !== hudTarget) {
         targetEl.textContent = label;
         hudTarget = label;
       }
-      const hands = handLabel();
+
+      const hands = handLabel(hand);
       if (hands !== hudHands) {
         handsEl.textContent = hands;
         hudHands = hands;
+      }
+
+      const hold = String(crates.length);
+      if (hold !== hudHold) {
+        holdEl.textContent = hold;
+        hudHold = hold;
+      }
+
+      const dock = String(dockPile);
+      if (dock !== hudDock) {
+        dockEl.textContent = dock;
+        hudDock = dock;
       }
     }
 
@@ -557,8 +786,9 @@
       const dir = activeDirection();
       if (dir !== null) {
         player.facing = dir;
-        const step = PLAYER_SPEED * dt;
-        moveWithCollision(board, objects, player, DIRS[dir].x * step, DIRS[dir].y * step, PLAYER_RADIUS);
+        const speed = hand.type === 'crate' ? CARRY_SPEED : PLAYER_SPEED;
+        const step = speed * dt;
+        moveWithCollision(board, objects, player, DIRS[dir].x * step, DIRS[dir].y * step, PLAYER_RADIUS, crates);
       }
       updateHud();
     }
@@ -791,6 +1021,8 @@
         drawWrenchIcon(px + TILE / 2, py + 38, 1);
         ctx.fillStyle = PALETTE.text;
         ctx.font = '600 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
         ctx.fillText('WRENCH', px + TILE / 2, py + TILE - 12);
       } else {
         ctx.strokeStyle = 'rgba(139, 151, 173, 0.55)';
@@ -798,13 +1030,36 @@
         ctx.lineWidth = 1.5;
         ctx.strokeRect(px + 15, py + 30, TILE - 30, 17);
         ctx.setLineDash([]);
-        ctx.fillStyle = '#8b97ad';
+        ctx.fillStyle = PALETTE.muted;
         ctx.font = '600 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
         ctx.fillText('EMPTY', px + TILE / 2, py + TILE - 12);
       }
+    }
 
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
+    function drawCrateIcon(cx, cy, size) {
+      const x = cx - size / 2;
+      const y = cy - size / 2;
+      ctx.fillStyle = PALETTE.crateDark;
+      roundRect(x + 2, y + 2, size - 4, size - 4, 4);
+      ctx.fill();
+      ctx.fillStyle = PALETTE.crate;
+      roundRect(x + 4, y + 4, size - 8, size - 8, 3);
+      ctx.fill();
+      ctx.strokeStyle = PALETTE.crateStrap;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, y + 6);
+      ctx.lineTo(cx, y + size - 6);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x + 6, cy);
+      ctx.lineTo(x + size - 6, cy);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(109, 74, 34, 0.8)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 4.5, y + 4.5, size - 9, size - 9);
     }
 
     function drawObjects() {
@@ -812,22 +1067,98 @@
         const o = objects[i];
         if (o.kind === 'equipment') drawEngine(o);
         else if (o.kind === 'console') drawConsole(o);
-        else if (o.kind === 'bench') drawBench(o, !(hand.type === 'tool' && hand.id === 'wrench'));
+        else if (o.kind === 'bench') drawBench(o, !toolIsTaken(hand, WRENCH));
       }
+    }
+
+    function drawCrates() {
+      for (let i = 0; i < crates.length; i++) {
+        const crate = crates[i];
+        drawCrateIcon(crate.x * TILE + TILE / 2, crate.y * TILE + TILE / 2, TILE - 12);
+      }
+    }
+
+    function drawDockMargin() {
+      ctx.fillStyle = PALETTE.dock;
+      ctx.fillRect(0, 0, DOCK_MARGIN, HEIGHT);
+
+      for (let y = 0; y < HEIGHT; y += TILE) {
+        const shade = (y / TILE) % 2 === 0 ? '#262b35' : '#222731';
+        ctx.fillStyle = shade;
+        ctx.fillRect(0, y, DOCK_MARGIN, TILE);
+        ctx.strokeStyle = PALETTE.dockLine;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, y + 0.5);
+        ctx.lineTo(DOCK_MARGIN, y + 0.5);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = 'rgba(242, 169, 59, 0.14)';
+      ctx.fillRect(DOCK_MARGIN - 8, 0, 8, HEIGHT);
+
+      ctx.fillStyle = PALETTE.muted;
+      ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('DOCK', DOCK_MARGIN / 2, 28);
+
+      const slots = [
+        { x: 30, y: 140 },
+        { x: 58, y: 140 },
+        { x: 30, y: 168 },
+        { x: 58, y: 168 }
+      ];
+      const shown = Math.min(dockPile, slots.length);
+      for (let i = 0; i < shown; i++) {
+        drawCrateIcon(slots[i].x, slots[i].y, 24);
+      }
+
+      if (dockPile === 0) {
+        ctx.strokeStyle = 'rgba(139, 151, 173, 0.5)';
+        ctx.setLineDash([4, 3]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(18, 128, 60, 64);
+        ctx.setLineDash([]);
+        ctx.fillStyle = PALETTE.muted;
+        ctx.font = '600 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+        ctx.fillText('EMPTY', DOCK_MARGIN / 2, 160);
+      }
+
+      ctx.fillStyle = PALETTE.text;
+      ctx.font = '700 12px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.fillText('x' + dockPile, DOCK_MARGIN / 2, 212);
+
+      ctx.strokeStyle = PALETTE.amber;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(72, 154);
+      ctx.lineTo(88, 154);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(83, 149);
+      ctx.lineTo(89, 154);
+      ctx.lineTo(83, 159);
+      ctx.stroke();
     }
 
     function drawTarget() {
       const target = targetCell(player);
       if (!insideBoard(target.x, target.y)) return;
+
+      const color = PALETTE.amber;
+
       const px = target.x * TILE;
       const py = target.y * TILE;
       const inset = 3;
       const corner = 16;
 
-      ctx.fillStyle = 'rgba(242, 169, 59, 0.08)';
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.08;
       ctx.fillRect(px + inset, py + inset, TILE - inset * 2, TILE - inset * 2);
+      ctx.globalAlpha = 1;
 
-      ctx.strokeStyle = PALETTE.amber;
+      ctx.strokeStyle = color;
       ctx.lineWidth = 3;
       ctx.lineCap = 'round';
       ctx.beginPath();
@@ -844,6 +1175,43 @@
       ctx.lineTo(px + inset, py + TILE - inset);
       ctx.lineTo(px + inset, py + TILE - inset - corner);
       ctx.stroke();
+    }
+
+    function drawGhost() {
+      if (hand.type !== 'crate') return;
+      const anchor = placementAnchor(board, objects, crates, player);
+      if (!insideBoard(anchor.x, anchor.y)) return;
+
+      const check = anchor.check;
+      const color = check.ok ? PALETTE.green : PALETTE.red;
+      const px = anchor.x * TILE;
+      const py = anchor.y * TILE;
+
+      ctx.globalAlpha = 0.4;
+      ctx.fillStyle = color;
+      roundRect(px + 8, py + 8, TILE - 16, TILE - 16, 5);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      if (!check.ok && check.reason) {
+        const text = check.reason;
+        const metrics = ctx.measureText ? ctx.measureText(text) : null;
+        const textWidth = metrics && typeof metrics.width === 'number' ? metrics.width : text.length * 6;
+        const boxWidth = textWidth + 12;
+        const boxX = px + TILE / 2 - boxWidth / 2;
+        const boxY = py - 20;
+        ctx.fillStyle = 'rgba(9, 13, 21, 0.92)';
+        roundRect(boxX, boxY, boxWidth, 16, 4);
+        ctx.fill();
+        ctx.strokeStyle = PALETTE.red;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = PALETTE.text;
+        ctx.font = '600 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, px + TILE / 2, boxY + 8);
+      }
     }
 
     function drawPlayer() {
@@ -877,18 +1245,29 @@
       ctx.closePath();
       ctx.fill();
 
-      if (hand.type === 'tool' && hand.id === 'wrench') {
+      if (toolIsTaken(hand, WRENCH)) {
         drawWrenchIcon(px + dir.x * r + 8, py + dir.y * r - 4, 0.65);
+      } else if (hand.type === 'crate') {
+        drawCrateIcon(px + dir.x * r + 10, py + dir.y * r - 2, 20);
       }
     }
 
     function render() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, WIDTH, HEIGHT);
+      ctx.clearRect(0, 0, VIEW_WIDTH, HEIGHT);
+      ctx.fillStyle = PALETTE.space;
+      ctx.fillRect(0, 0, VIEW_WIDTH, HEIGHT);
+      drawDockMargin();
+
+      ctx.save();
+      ctx.translate(DOCK_MARGIN, 0);
       drawBoard();
       drawObjects();
+      drawCrates();
+      drawGhost();
       drawTarget();
       drawPlayer();
+      ctx.restore();
     }
 
     let lastTime = global.performance.now();
@@ -905,6 +1284,7 @@
     global.addEventListener('keyup', onKeyUp);
     global.addEventListener('blur', function () {
       heldCodes.length = 0;
+      eHeld = false;
     });
     global.addEventListener('resize', function () {
       lastTime = global.performance.now();
