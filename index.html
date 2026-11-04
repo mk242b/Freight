@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Freight — Step 1: Spatial Foundation</title>
+<style>
+  :root {
+    --space: #090d15;
+    --panel: #131a28;
+    --panel-2: #1a2335;
+    --line: #2a3850;
+    --amber: #f2a93b;
+    --teal: #4cc9b8;
+    --text: #e8e4d6;
+    --muted: #8b97ad;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: radial-gradient(1200px 600px at 50% -10%, #101a2e 0%, var(--space) 60%);
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  body { display: flex; justify-content: center; padding: 24px 16px 40px; }
+  #app { width: min(952px, 100%); }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    font-size: 15px;
+    color: var(--amber);
+  }
+  .brand span {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .stats {
+    display: flex;
+    gap: 22px;
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+  .stats b {
+    display: block;
+    margin-top: 2px;
+    font-size: 13px;
+    letter-spacing: 0.02em;
+    color: var(--text);
+    text-transform: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .hint {
+    flex-basis: 100%;
+    padding-top: 10px;
+    border-top: 1px solid rgba(42, 56, 80, 0.7);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .hint kbd {
+    display: inline-block;
+    padding: 1px 6px;
+    margin: 0 1px;
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: #0e1523;
+    color: var(--text);
+    font: inherit;
+    font-size: 11px;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    max-width: 952px;
+    height: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--space);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  }
+  .note {
+    margin: 10px 4px 0;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .note b { color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">FREIGHT <span>Step 1 · Spatial foundation</span></div>
+    <div class="stats">
+      <div>Facing <b id="hud-facing">down</b></div>
+      <div>Target <b id="hud-target">—</b></div>
+    </div>
+    <div class="hint">Move with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> or the arrow keys. The four amber corners mark the tile you face.</div>
+  </header>
+  <canvas id="game" width="952" height="448" aria-label="Freight starter ship board"></canvas>
+  <p class="note">Starter ship · <b>17 × 8</b> grid · <b>56 px</b> tiles · <b>28</b> floor cells · <b>19</b> usable</p>
+    <noscript>This prototype needs JavaScript enabled.</noscript>
+</div>
+<script id="game">
+(function (global) {
+  'use strict';
+
+  const TILE = 56;
+  const COLS = 17;
+  const ROWS = 8;
+  const WIDTH = COLS * TILE;
+  const HEIGHT = ROWS * TILE;
+
+  const T_VOID = 0;
+  const T_FLOOR = 1;
+  const T_WALL = 2;
+  const T_RAMP = 3;
+  const T_DOOR = 4;
+
+  const UP = 0;
+  const RIGHT = 1;
+  const DOWN = 2;
+  const LEFT = 3;
+
+  const DIRS = [
+    { x: 0, y: -1 },
+    { x: 1, y: 0 },
+    { x: 0, y: 1 },
+    { x: -1, y: 0 }
+  ];
+  const DIR_NAMES = ['up', 'right', 'down', 'left'];
+
+  const PLAYER_SPEED = 4.4;
+  const PLAYER_RADIUS = 0.27;
+
+  const RESERVED = [
+    { x: 1, y: 2 },
+    { x: 1, y: 3 },
+    { x: 1, y: 4 }
+  ];
+
+  const FLOOR_BOUNDS = { x0: 1, x1: 7, y0: 1, y1: 4 };
+
+  const PALETTE = {
+    space: '#090d15',
+    floor: '#1b2a4a',
+    floorLine: '#283c66',
+    floorRivet: '#34507f',
+    wall: '#111827',
+    wallTop: '#1e293b',
+    wallEdge: '#080d16',
+    amber: '#f2a93b',
+    teal: '#4cc9b8',
+    red: '#e5533d',
+    green: '#6fcf7c',
+    text: '#e8e4d6',
+    engine: '#2b3a55',
+    engineDark: '#172033',
+    engineCore: '#f2a93b',
+    bench: '#4a3524',
+    benchTop: '#6b4a2f',
+    panel: '#1e293b'
+  };
+
+  function buildStarterBoard() {
+    const board = Array.from({ length: ROWS }, function () {
+      return new Array(COLS).fill(T_VOID);
+    });
+
+    for (let y = FLOOR_BOUNDS.y0; y <= FLOOR_BOUNDS.y1; y++) {
+      for (let x = FLOOR_BOUNDS.x0; x <= FLOOR_BOUNDS.x1; x++) {
+        board[y][x] = T_FLOOR;
+      }
+    }
+
+    board[2][0] = T_RAMP;
+    board[3][0] = T_RAMP;
+    board[4][0] = T_DOOR;
+
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        if (board[y][x] !== T_VOID) continue;
+        let touchesFloor = false;
+        for (let dy = -1; dy <= 1 && !touchesFloor; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+            if (board[ny][nx] === T_FLOOR) {
+              touchesFloor = true;
+              break;
+            }
+          }
+        }
+        if (touchesFloor) board[y][x] = T_WALL;
+      }
+    }
+
+    return board;
+  }
+
+  function starterObjects() {
+    return [
+      { id: 'engine', name: 'Engine', kind: 'equipment', x: 6, y: 1, w: 2, h: 2, health: 100 },
+      { id: 'console', name: 'Pilot Console', kind: 'console', x: 7, y: 4, w: 1, h: 1 },
+      { id: 'bench', name: 'Wrench Bench', kind: 'bench', x: 2, y: 4, w: 1, h: 1 }
+    ];
+  }
+
+  function starterPlayer() {
+    return { x: 2.5, y: 3.5, facing: DOWN };
+  }
+
+  function clamp(value, min, max) {
+    return value < min ? min : value > max ? max : value;
+  }
+
+  function insideBoard(x, y) {
+    return x >= 0 && x < COLS && y >= 0 && y < ROWS;
+  }
+
+  function objectAt(objects, x, y) {
+    for (let i = 0; i < objects.length; i++) {
+      const o = objects[i];
+      if (x >= o.x && x < o.x + o.w && y >= o.y && y < o.y + o.h) return o;
+    }
+    return null;
+  }
+
+  function isSolidCell(board, objects, x, y) {
+    if (!insideBoard(x, y)) return true;
+    const tile = board[y][x];
+    if (tile === T_WALL || tile === T_VOID || tile === T_RAMP || tile === T_DOOR) return true;
+    return Boolean(objectAt(objects, x, y));
+  }
+
+  function circleHitsCell(px, py, r, cx, cy) {
+    const nx = clamp(px, cx, cx + 1);
+    const ny = clamp(py, cy, cy + 1);
+    const dx = px - nx;
+    const dy = py - ny;
+    return dx * dx + dy * dy < r * r - 1e-9;
+  }
+
+  function collidesAt(board, objects, px, py, r) {
+    const x0 = Math.floor(px - r);
+    const x1 = Math.floor(px + r);
+    const y0 = Math.floor(py - r);
+    const y1 = Math.floor(py + r);
+    for (let cy = y0; cy <= y1; cy++) {
+      for (let cx = x0; cx <= x1; cx++) {
+        if (!isSolidCell(board, objects, cx, cy)) continue;
+        if (circleHitsCell(px, py, r, cx, cy)) return true;
+      }
+    }
+    return false;
+  }
+
+  function resolveAxis(board, objects, player, delta, axis, r) {
+    if (delta === 0) return;
+    if (axis === 'x') player.x += delta;
+    else player.y += delta;
+
+    const x0 = Math.floor(player.x - r);
+    const x1 = Math.floor(player.x + r);
+    const y0 = Math.floor(player.y - r);
+    const y1 = Math.floor(player.y + r);
+
+    for (let cy = y0; cy <= y1; cy++) {
+      for (let cx = x0; cx <= x1; cx++) {
+        if (!isSolidCell(board, objects, cx, cy)) continue;
+        if (!circleHitsCell(player.x, player.y, r, cx, cy)) continue;
+        if (axis === 'x') player.x = delta > 0 ? cx - r : cx + 1 + r;
+        else player.y = delta > 0 ? cy - r : cy + 1 + r;
+      }
+    }
+  }
+
+  function moveWithCollision(board, objects, player, dx, dy, r) {
+    resolveAxis(board, objects, player, dx, 'x', r);
+    resolveAxis(board, objects, player, dy, 'y', r);
+  }
+
+  function targetCell(player) {
+    const dir = DIRS[player.facing];
+    return {
+      x: Math.floor(player.x) + dir.x,
+      y: Math.floor(player.y) + dir.y
+    };
+  }
+
+  function tileName(board, objects, x, y) {
+    if (!insideBoard(x, y)) return 'Space';
+    const object = objectAt(objects, x, y);
+    if (object) return object.name;
+    const tile = board[y][x];
+    if (tile === T_FLOOR) return 'Floor';
+    if (tile === T_WALL) return 'Wall';
+    if (tile === T_RAMP) return 'Ramp';
+    if (tile === T_DOOR) return 'Side door';
+    return 'Space';
+  }
+
+  function healthColor(health) {
+    if (health > 60) return PALETTE.green;
+    if (health >= 30) return PALETTE.amber;
+    return PALETTE.red;
+  }
+
+  const Logic = {
+    TILE: TILE,
+    COLS: COLS,
+    ROWS: ROWS,
+    WIDTH: WIDTH,
+    HEIGHT: HEIGHT,
+    T_VOID: T_VOID,
+    T_FLOOR: T_FLOOR,
+    T_WALL: T_WALL,
+    T_RAMP: T_RAMP,
+    T_DOOR: T_DOOR,
+    UP: UP,
+    RIGHT: RIGHT,
+    DOWN: DOWN,
+    LEFT: LEFT,
+    DIRS: DIRS,
+    DIR_NAMES: DIR_NAMES,
+    PLAYER_SPEED: PLAYER_SPEED,
+    PLAYER_RADIUS: PLAYER_RADIUS,
+    RESERVED: RESERVED,
+    buildStarterBoard: buildStarterBoard,
+    starterObjects: starterObjects,
+    starterPlayer: starterPlayer,
+    insideBoard: insideBoard,
+    objectAt: objectAt,
+    isSolidCell: isSolidCell,
+    collidesAt: collidesAt,
+    moveWithCollision: moveWithCollision,
+    targetCell: targetCell,
+    tileName: tileName,
+    healthColor: healthColor
+  };
+
+  global.FreightLogic = Logic;
+
+  if (typeof document === 'undefined') return;
+
+  function boot() {
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const facingEl = document.getElementById('hud-facing');
+    const targetEl = document.getElementById('hud-target');
+
+    const board = buildStarterBoard();
+    const objects = starterObjects();
+    const player = starterPlayer();
+
+    const dpr = Math.min(global.devicePixelRatio || 1, 2);
+    canvas.width = WIDTH * dpr;
+    canvas.height = HEIGHT * dpr;
+
+    const KEY_DIR = {
+      KeyW: UP,
+      KeyD: RIGHT,
+      KeyS: DOWN,
+      KeyA: LEFT,
+      ArrowUp: UP,
+      ArrowRight: RIGHT,
+      ArrowDown: DOWN,
+      ArrowLeft: LEFT
+    };
+
+    const heldCodes = [];
+    let hudFacing = '';
+    let hudTarget = '';
+
+    function activeDirection() {
+      for (let i = heldCodes.length - 1; i >= 0; i--) {
+        const dir = KEY_DIR[heldCodes[i]];
+        if (dir !== undefined) return dir;
+      }
+      return null;
+    }
+
+    function onKeyDown(event) {
+      if (event.repeat) return;
+      if (KEY_DIR[event.code] === undefined) return;
+      event.preventDefault();
+      if (heldCodes.indexOf(event.code) === -1) heldCodes.push(event.code);
+    }
+
+    function onKeyUp(event) {
+      if (KEY_DIR[event.code] === undefined) return;
+      const index = heldCodes.indexOf(event.code);
+      if (index !== -1) heldCodes.splice(index, 1);
+    }
+
+    function updateHud() {
+      const facing = DIR_NAMES[player.facing];
+      if (facing !== hudFacing) {
+        facingEl.textContent = facing;
+        hudFacing = facing;
+      }
+      const target = targetCell(player);
+      let label = '—';
+      if (insideBoard(target.x, target.y)) {
+        label = tileName(board, objects, target.x, target.y) + ' · x' + target.x + ' y' + (target.y + 1);
+      }
+      if (label !== hudTarget) {
+        targetEl.textContent = label;
+        hudTarget = label;
+      }
+    }
+
+    function update(dt) {
+      const dir = activeDirection();
+      if (dir !== null) {
+        player.facing = dir;
+        const step = PLAYER_SPEED * dt;
+        moveWithCollision(board, objects, player, DIRS[dir].x * step, DIRS[dir].y * step, PLAYER_RADIUS);
+      }
+      updateHud();
+    }
+
+    function roundRect(x, y, w, h, radius) {
+      const r = Math.min(radius, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function drawStars() {
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          if (board[y][x] !== T_VOID) continue;
+          const hash = ((x * 73856093) ^ (y * 19349663)) >>> 0;
+          if (hash % 9 !== 0) continue;
+          const sx = x * TILE + (hash % (TILE - 8)) + 4;
+          const sy = y * TILE + ((hash >>> 5) % (TILE - 8)) + 4;
+          ctx.globalAlpha = 0.15 + ((hash >>> 9) % 35) / 100;
+          ctx.fillStyle = '#9fb3d1';
+          ctx.beginPath();
+          ctx.arc(sx, sy, 1.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawFloorCell(px, py) {
+      ctx.fillStyle = PALETTE.floor;
+      ctx.fillRect(px, py, TILE, TILE);
+      ctx.strokeStyle = PALETTE.floorLine;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(px + 0.5, py + 0.5, TILE - 1, TILE - 1);
+      ctx.fillStyle = PALETTE.floorRivet;
+      for (let i = 0; i < 2; i++) {
+        for (let j = 0; j < 2; j++) {
+          ctx.beginPath();
+          ctx.arc(px + 7 + i * (TILE - 14), py + 7 + j * (TILE - 14), 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    function drawWallCell(px, py) {
+      ctx.fillStyle = PALETTE.wall;
+      ctx.fillRect(px, py, TILE, TILE);
+      ctx.fillStyle = PALETTE.wallTop;
+      ctx.fillRect(px, py, TILE, 5);
+      ctx.fillStyle = PALETTE.wallEdge;
+      ctx.fillRect(px, py + TILE - 4, TILE, 4);
+      ctx.fillStyle = 'rgba(52, 80, 127, 0.45)';
+      ctx.beginPath();
+      ctx.arc(px + 10, py + 14, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(px + TILE - 10, py + TILE - 14, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawRampCell(px, py, isDoor) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(px, py, TILE, TILE);
+      ctx.clip();
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(px, py, TILE, TILE);
+      ctx.strokeStyle = isDoor ? 'rgba(76, 201, 184, 0.35)' : 'rgba(242, 169, 59, 0.35)';
+      ctx.lineWidth = 6;
+      for (let i = -TILE; i < TILE * 2; i += 16) {
+        ctx.beginPath();
+        ctx.moveTo(px + i, py + TILE);
+        ctx.lineTo(px + i + TILE, py);
+        ctx.stroke();
+      }
+      ctx.restore();
+      ctx.strokeStyle = isDoor ? PALETTE.teal : PALETTE.amber;
+      ctx.globalAlpha = 0.7;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(px + 3, py + 3, TILE - 6, TILE - 6);
+      ctx.globalAlpha = 1;
+      if (isDoor) {
+        ctx.fillStyle = PALETTE.teal;
+        ctx.beginPath();
+        ctx.arc(px + TILE - 16, py + TILE / 2, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawBoard() {
+      ctx.fillStyle = PALETTE.space;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+      drawStars();
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          const tile = board[y][x];
+          const px = x * TILE;
+          const py = y * TILE;
+          if (tile === T_FLOOR) drawFloorCell(px, py);
+          else if (tile === T_WALL) drawWallCell(px, py);
+          else if (tile === T_RAMP) drawRampCell(px, py, false);
+          else if (tile === T_DOOR) drawRampCell(px, py, true);
+        }
+      }
+    }
+
+    function drawEngine(o) {
+      const px = o.x * TILE;
+      const py = o.y * TILE;
+      const pw = o.w * TILE;
+      const ph = o.h * TILE;
+
+      ctx.fillStyle = PALETTE.engineDark;
+      roundRect(px + 3, py + 3, pw - 6, ph - 6, 7);
+      ctx.fill();
+      ctx.fillStyle = PALETTE.engine;
+      roundRect(px + 8, py + 8, pw - 16, ph - 16, 5);
+      ctx.fill();
+      ctx.strokeStyle = PALETTE.wallEdge;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(10, 15, 26, 0.8)';
+      ctx.lineWidth = 2;
+      for (let i = 1; i <= 3; i++) {
+        const gx = px + 8 + ((pw - 16) / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(gx, py + 12);
+        ctx.lineTo(gx, py + ph - 12);
+        ctx.stroke();
+      }
+
+      const cx = px + pw / 2;
+      const cy = py + ph / 2;
+      ctx.fillStyle = 'rgba(229, 83, 61, 0.35)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 17, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = PALETTE.engineCore;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255, 236, 190, 0.9)';
+      ctx.beginPath();
+      ctx.arc(cx - 2, cy - 2, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      const barX = px + 10;
+      const barY = py + 10;
+      const barW = pw - 20;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+      ctx.fillRect(barX, barY, barW, 5);
+      ctx.fillStyle = healthColor(o.health);
+      ctx.fillRect(barX, barY, barW * (o.health / 100), 5);
+
+      ctx.fillStyle = PALETTE.text;
+      ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('ENGINE', cx, py + ph - 14);
+    }
+
+    function drawConsole(o) {
+      const px = o.x * TILE;
+      const py = o.y * TILE;
+      ctx.fillStyle = PALETTE.panel;
+      roundRect(px + 6, py + 8, TILE - 12, TILE - 16, 4);
+      ctx.fill();
+      ctx.strokeStyle = PALETTE.wallEdge;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = PALETTE.teal;
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(px + 12, py + 14, TILE - 24, TILE - 32);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = 'rgba(9, 13, 21, 0.45)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 3; i++) {
+        const ly = py + 20 + i * 6;
+        ctx.beginPath();
+        ctx.moveTo(px + 13, ly);
+        ctx.lineTo(px + TILE - 13, ly);
+        ctx.stroke();
+      }
+      ctx.fillStyle = PALETTE.text;
+      ctx.font = '600 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('PILOT', px + TILE / 2, py + TILE - 12);
+    }
+
+    function drawBench(o) {
+      const px = o.x * TILE;
+      const py = o.y * TILE;
+      ctx.fillStyle = PALETTE.bench;
+      roundRect(px + 5, py + 12, TILE - 10, TILE - 22, 4);
+      ctx.fill();
+      ctx.fillStyle = PALETTE.benchTop;
+      roundRect(px + 8, py + 15, TILE - 16, 12, 3);
+      ctx.fill();
+      ctx.strokeStyle = PALETTE.amber;
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.save();
+      ctx.translate(px + TILE / 2, py + 38);
+      ctx.rotate(-Math.PI / 4);
+      ctx.beginPath();
+      ctx.moveTo(-9, -3);
+      ctx.lineTo(8, 4);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(10, 4.5, 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = PALETTE.text;
+      ctx.font = '600 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('WRENCH', px + TILE / 2, py + TILE - 12);
+    }
+
+    function drawObjects() {
+      for (let i = 0; i < objects.length; i++) {
+        const o = objects[i];
+        if (o.kind === 'equipment') drawEngine(o);
+        else if (o.kind === 'console') drawConsole(o);
+        else if (o.kind === 'bench') drawBench(o);
+      }
+    }
+
+    function drawTarget() {
+      const target = targetCell(player);
+      if (!insideBoard(target.x, target.y)) return;
+      const px = target.x * TILE;
+      const py = target.y * TILE;
+      const inset = 3;
+      const corner = 16;
+
+      ctx.fillStyle = 'rgba(242, 169, 59, 0.08)';
+      ctx.fillRect(px + inset, py + inset, TILE - inset * 2, TILE - inset * 2);
+
+      ctx.strokeStyle = PALETTE.amber;
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(px + inset, py + inset + corner);
+      ctx.lineTo(px + inset, py + inset);
+      ctx.lineTo(px + inset + corner, py + inset);
+      ctx.moveTo(px + TILE - inset - corner, py + inset);
+      ctx.lineTo(px + TILE - inset, py + inset);
+      ctx.lineTo(px + TILE - inset, py + inset + corner);
+      ctx.moveTo(px + TILE - inset, py + TILE - inset - corner);
+      ctx.lineTo(px + TILE - inset, py + TILE - inset);
+      ctx.lineTo(px + TILE - inset - corner, py + TILE - inset);
+      ctx.moveTo(px + inset + corner, py + TILE - inset);
+      ctx.lineTo(px + inset, py + TILE - inset);
+      ctx.lineTo(px + inset, py + TILE - inset - corner);
+      ctx.stroke();
+    }
+
+    function drawPlayer() {
+      const px = player.x * TILE;
+      const py = player.y * TILE;
+      const r = PLAYER_RADIUS * TILE;
+      const dir = DIRS[player.facing];
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+      ctx.beginPath();
+      ctx.ellipse(px, py + r * 0.9, r * 1.2, r * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = PALETTE.text;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = PALETTE.amber;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      const perpX = -dir.y;
+      const perpY = dir.x;
+      const baseX = px + dir.x * r * 0.35;
+      const baseY = py + dir.y * r * 0.35;
+      ctx.fillStyle = PALETTE.amber;
+      ctx.beginPath();
+      ctx.moveTo(px + dir.x * r * 1.05, py + dir.y * r * 1.05);
+      ctx.lineTo(baseX + perpX * r * 0.5, baseY + perpY * r * 0.5);
+      ctx.lineTo(baseX - perpX * r * 0.5, baseY - perpY * r * 0.5);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function render() {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, WIDTH, HEIGHT);
+      drawBoard();
+      drawObjects();
+      drawTarget();
+      drawPlayer();
+    }
+
+    let lastTime = global.performance.now();
+
+    function frame(now) {
+      const dt = Math.min((now - lastTime) / 1000, 0.05);
+      lastTime = now;
+      update(dt);
+      render();
+      global.requestAnimationFrame(frame);
+    }
+
+    global.addEventListener('keydown', onKeyDown, { passive: false });
+    global.addEventListener('keyup', onKeyUp);
+    global.addEventListener('blur', function () {
+      heldCodes.length = 0;
+    });
+    global.addEventListener('resize', function () {
+      lastTime = global.performance.now();
+    });
+
+    updateHud();
+    global.requestAnimationFrame(frame);
+  }
+
+  boot();
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+</body>
+</html>
